@@ -1,0 +1,35 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2013
+VisualStudioVersion = 12.0.40629.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Psns.Common.InterProcess", "Psns.Common.InterProcess\Psns.Common.InterProcess.csproj", "{DE1A920B-34DD-4E56-95EC-2D009899A4A7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Psns.Common.InterProcess.Tests", "Psns.Common.InterProcess.Tests\Psns.Common.InterProcess.Tests.csproj", "{2197E1F9-67C7-428E-90A6-30FB1AF3F536}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{2B843C5E-FA40-4CE1-8860-1305676D45AC}"
+	ProjectSection(SolutionItems) = preProject
+		LICENSE.md = LICENSE.md
+		Psns.Common.InterProcess.nuspec = Psns.Common.InterProcess.nuspec
+		README.md = README.md
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DE1A920B-34DD-4E56-95EC-2D009899A4A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DE1A920B-34DD-4E56-95EC-2D009899A4A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DE1A920B-34DD-4E56-95EC-2D009899A4A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DE1A920B-34DD-4E56-95EC-2D009899A4A7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2197E1F9-67C7-428E-90A6-30FB1AF3F536}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2197E1F9-67C7-428E-90A6-30FB1AF3F536}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2197E1F9-67C7-428E-90A6-30FB1AF3F536}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2197E1F9-67C7-428E-90A6-30FB1AF3F536}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
