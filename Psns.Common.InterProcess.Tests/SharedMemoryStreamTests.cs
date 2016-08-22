@@ -72,7 +72,7 @@ namespace Psns.Common.InterProcess.Tests
 
             var task = Task.Factory.StartNew(() =>
             {
-                var pickupStream = SharedMemoryStream.Open("stream2", stream.Length);
+                var pickupStream = SharedMemoryStream.Open("stream2");
                 _streams = _streams.Add(pickupStream);
                 _received = (TestData)_formatter.Deserialize(pickupStream);
             });
@@ -92,6 +92,7 @@ namespace Psns.Common.InterProcess.Tests
             _stream = SharedMemoryStream.Create("stream3");
 
             _stream.Write(new byte[1000], 0, 1000);
+            _stream.Flush();
             Assert.That(_stream.Length, Is.EqualTo(1000));
         }
 

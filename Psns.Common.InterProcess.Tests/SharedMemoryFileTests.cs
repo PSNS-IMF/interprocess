@@ -59,5 +59,20 @@ namespace Psns.Common.InterProcess.Tests
             file = SharedMemoryFile.CreateOrOpen("file1", 1);
             file.Dispose();
         }
+
+        [Test]
+        public void Reads_specified_view_of_bytes()
+        {
+            using(var file = SharedMemoryFile.CreateOrOpen("file", 5))
+            {
+                var existing = new byte[] { 1, 2, 3, 4, 5 };
+                file.Write(existing);
+
+                var buffer = new byte[10];
+                file.Read(2, buffer, 7, 3);
+
+                Assert.AreEqual(new byte[] { 3, 4, 5 }, buffer.Skip(7));
+            }
+        }
     }
 }

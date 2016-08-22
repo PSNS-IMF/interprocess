@@ -6,6 +6,9 @@ using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess
 {
+    /// <summary>
+    /// A stream backed by a ShareMemoryFile useful for object serialization
+    /// </summary>
     public class SharedMemoryStream : Stream
     {
         readonly string _name;
@@ -13,14 +16,24 @@ namespace Psns.Common.InterProcess
         Option<Lst<byte>> _buffer;
         Option<SharedMemoryFile> _file;
 
-        public static SharedMemoryStream Create(Some<string> name) => new SharedMemoryStream(name, 0L);
+        /// <summary>
+        /// Create a new stream
+        /// </summary>
+        /// <param name="name">A unique name not used by another stream or SharedMemoryFile</param>
+        /// <returns>A new stream</returns>
+        public static SharedMemoryStream Create(Some<string> name) => new SharedMemoryStream(name);
 
-        public static SharedMemoryStream Open(Some<string> name, long length) => new SharedMemoryStream(name, length);
+        /// <summary>
+        /// Open an existing stream
+        /// </summary>
+        /// <param name="name">Name of the existing stream</param>
+        /// <param name="length">The size of the existing stream</param>
+        /// <returns></returns>
+        public static SharedMemoryStream Open(Some<string> name) => new SharedMemoryStream(name);
 
-        SharedMemoryStream(Some<string> name, long length)
+        SharedMemoryStream(Some<string> name)
         {
             _name = name;
-            _length = length;
             _buffer = List<byte>();
         }
 
@@ -63,30 +76,17 @@ namespace Psns.Common.InterProcess
                 Some: b => b,
                 None: () => List<byte>());
 
-            if(someBuffer == Lst<byte>.Empty)
-            {
-                var file = match(_file, f => f, () => SharedMemoryFile.Open(_name));
+            var someFile = match(_file, f => f, () => SharedMemoryFile.Open(_name));
 
-                var bytes = new byte[_length];
-                file.Read(bytes);
-
-                someBuffer = someBuffer.AddRange(bytes);
-                _buffer = someBuffer;
-                _file = file;
-            }
-
-            long takeCount = count;
-            var selectionSizeRemaining = _length - Position;
-
-            if(selectionSizeRemaining < count)
-                takeCount = count - selectionSizeRemaining;
-
-            var selection = toArray(someBuffer.Skip((int)Position).Take((int)takeCount));
-            selection.CopyTo(buffer, offset);
+            someFile.Read(Position, buffer, offset, count);
+            someBuffer = someBuffer.AddRange(buffer.Skip(offset).Take(count));
+            _buffer = someBuffer;
+            _file = someFile;
 
             Position = Position + count;
+            if(_length < Position) _length = _length + count;
 
-            return (int)takeCount;
+            return count;
         }
 
         public override long Seek(long offset, SeekOrigin origin)
