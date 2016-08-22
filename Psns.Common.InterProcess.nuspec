@@ -10,6 +10,10 @@
     <projectUrl>https://github.com/PSNS-IMF/interprocess</projectUrl>
     <licenseUrl>https://github.com/PSNS-IMF/interprocess/blob/master/LICENSE.md</licenseUrl>
     <releaseNotes>
+      ## 1.0.0.2
+      ### Features
+      * Added better handling for opening new or existing ShareMemoryFiles
+
       ## 1.0.0.1
       ### Features
       * Initial release
