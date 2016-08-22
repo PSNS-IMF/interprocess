@@ -1,29 +1,40 @@
 ﻿using System;
 using System.IO.MemoryMappedFiles;
 using LanguageExt;
+using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess
 {
     public class SharedMemoryFile : IDisposable
     {
-        readonly long _size;
         readonly MemoryMappedFile _file;
+        readonly string _name;
 
-        SharedMemoryFile(long size, Some<MemoryMappedFile> file)
+        static Lst<string> _namesOpen = List<string>();
+
+        SharedMemoryFile(string name, Some<MemoryMappedFile> file)
         {
-            _size = size;
+            _name = name;
             _file = file;
         }
 
-        public static SharedMemoryFile Open(Some<string> name, long size)
+        public static SharedMemoryFile Open(Some<string> name)
         {
-            return new SharedMemoryFile(size, MemoryMappedFile.OpenExisting(name));
+            if(!_namesOpen.Exists(n => n == name)) 
+                throw new InvalidOperationException(string.Format("SharedMemoryFile {0} does not exist", name));
+
+            return new SharedMemoryFile(name, MemoryMappedFile.OpenExisting(name));
         }
 
-        public static SharedMemoryFile Create(Some<string> name, long size)
+        public static SharedMemoryFile CreateOrOpen(Some<string> name, long size)
         {
+            if(_namesOpen.Exists(n => n == name))
+                return Open(name);
+
             var file = MemoryMappedFile.CreateNew(name, size);
-            var buffer = new SharedMemoryFile(size, file);
+            var buffer = new SharedMemoryFile(name, file);
+
+            _namesOpen = _namesOpen.Add(name);
 
             return buffer;
         }
@@ -36,16 +47,12 @@ namespace Psns.Common.InterProcess
             }
         }
 
-        public byte[] Read()
+        public void Read(byte[] buffer)
         {
-            var buffer = new byte[_size];
-
             using(var view = _file.CreateViewAccessor())
             {
                 view.ReadArray(0, buffer, 0, buffer.Length);
             }
-
-            return buffer;
         }
 
         #region IDisposable Support
@@ -59,16 +66,14 @@ namespace Psns.Common.InterProcess
                 if(disposing)
                 {
                     _file.Dispose();
+                    _namesOpen = _namesOpen.Remove(_name);
                 }
 
                 disposedValue = true;
             }
         }
 
-        public void Dispose()
-        {
-            Dispose(true);
-        }
+        public void Dispose() => Dispose(true);
 
         #endregion
     }

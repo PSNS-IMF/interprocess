@@ -13,15 +13,9 @@ namespace Psns.Common.InterProcess
         Option<Lst<byte>> _buffer;
         Option<SharedMemoryFile> _file;
 
-        public static SharedMemoryStream Create(Some<string> name)
-        {
-            return new SharedMemoryStream(name, 0L);
-        }
+        public static SharedMemoryStream Create(Some<string> name) => new SharedMemoryStream(name, 0L);
 
-        public static SharedMemoryStream Open(Some<string> name, long length)
-        {
-            return new SharedMemoryStream(name, length);
-        }
+        public static SharedMemoryStream Open(Some<string> name, long length) => new SharedMemoryStream(name, length);
 
         SharedMemoryStream(Some<string> name, long length)
         {
@@ -52,7 +46,7 @@ namespace Psns.Common.InterProcess
                         var file = match(
                             _file, 
                             f => f, 
-                            () => SharedMemoryFile.Create(_name, data.Length));
+                            () => SharedMemoryFile.CreateOrOpen(_name, data.Length));
 
                         file.Write(data);
 
@@ -71,9 +65,12 @@ namespace Psns.Common.InterProcess
 
             if(someBuffer == Lst<byte>.Empty)
             {
-                var file = match(_file, f => f, () => SharedMemoryFile.Open(_name, _length));
+                var file = match(_file, f => f, () => SharedMemoryFile.Open(_name));
 
-                someBuffer = someBuffer.AddRange(file.Read());
+                var bytes = new byte[_length];
+                file.Read(bytes);
+
+                someBuffer = someBuffer.AddRange(bytes);
                 _buffer = someBuffer;
                 _file = file;
             }
@@ -125,6 +122,8 @@ namespace Psns.Common.InterProcess
             _buffer = someBuffer;
         }
 
+        #region IDisposable
+
         bool disposedValue = false;
 
         protected override void Dispose(bool disposing)
@@ -139,5 +138,7 @@ namespace Psns.Common.InterProcess
 
             base.Dispose(disposing);
         }
+
+        #endregion
     }
 }

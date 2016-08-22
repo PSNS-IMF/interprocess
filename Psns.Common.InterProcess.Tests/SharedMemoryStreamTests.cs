@@ -2,12 +2,13 @@
 using System;
 using System.Threading.Tasks;
 using System.Runtime.Serialization.Formatters.Binary;
+using LanguageExt;
 using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess.Tests
 {
-    [TestFixture()]
-    public class SharedMemoryStreamTests
+    [TestFixture]
+    public class SharedMemorySerializationTests
     {
         [Serializable]
         struct TestData
@@ -16,78 +17,127 @@ namespace Psns.Common.InterProcess.Tests
             public int[] Ids;
         }
 
-        [Test()]
-        public void Returns_data_sent_intraprocess()
+        TestData _toSend, _received;
+        Lst<SharedMemoryStream> _streams;
+        BinaryFormatter _formatter;
+
+        [SetUp]
+        public void Setup()
         {
-            var data = new TestData { Ids = new[] { 1, 2, 3, 4 }, Name = "test data" };
-            var stream = SharedMemoryStream.Create("process1");
-            var formatter = new BinaryFormatter();
-            formatter.Serialize(stream, data);
-
-            var received = (TestData)formatter.Deserialize(stream);
-
-            stream.Dispose();
-
-            Assert.That(map(received, r => string.Format("", r.Name, string.Join("", r.Ids))),
-                Is.EqualTo(map(data, d => string.Format("", d.Name, string.Join("", d.Ids)))));
+            _streams = List<SharedMemoryStream>();
+            _toSend = new TestData { Ids = new[] { 1, 2, 3, 4 }, Name = "test data" };
+            _formatter = new BinaryFormatter();
         }
 
-        [Test()]
+        [TearDown]
+        public void Teardown()
+        {
+            Assert.That(map(_received, r => string.Format("", r.Name, string.Join("", r.Ids))),
+                Is.EqualTo(map(_toSend, d => string.Format("", d.Name, string.Join("", d.Ids)))));
+
+            _streams.Iter(s => 
+            { 
+                Assert.AreEqual(251, s.Length);
+                Assert.AreEqual(251, s.Position);
+
+                s.Dispose(); 
+            });
+        }
+
+        SharedMemoryStream MakeStream(Some<string> name, bool store = true)
+        {
+            var stream = SharedMemoryStream.Create(name);
+            _formatter.Serialize(stream, _toSend);
+
+            if(store)
+                _streams = _streams.Add(stream);
+
+            return stream;
+        }
+
+        [Test]
+        public void Returns_data_sent_intraprocess()
+        {
+            var stream = MakeStream("stream1");
+            _received = (TestData)_formatter.Deserialize(stream);
+
+            Assert.AreEqual(251, stream.Length);
+            Assert.AreEqual(251, stream.Position);
+        }
+
+        [Test]
         public void Returns_data_sent_interprocess_when_file_isopen()
         {
-            var data = new TestData { Ids = new[] { 1, 2, 3, 4 }, Name = "test data" };
-            var formatter = new BinaryFormatter();
-            var stream = SharedMemoryStream.Create("process2");
-            formatter.Serialize(stream, data);
+            var stream = MakeStream("stream2", false);
 
-            var received = new TestData();
             var task = Task.Factory.StartNew(() =>
             {
-                using(var pickupStream = SharedMemoryStream.Open("process2", stream.Length))
-                {
-                    received = (TestData)formatter.Deserialize(pickupStream);
-                }
+                var pickupStream = SharedMemoryStream.Open("stream2", stream.Length);
+                _streams = _streams.Add(pickupStream);
+                _received = (TestData)_formatter.Deserialize(pickupStream);
             });
 
             Task.WaitAll(task);
-            stream.Dispose();
-
-            Assert.That(map(received, r => string.Format("", r.Name, string.Join("", r.Ids))),
-                Is.EqualTo(map(data, d => string.Format("", d.Name, string.Join("", d.Ids)))));
         }
+    }
 
-        [Test()]
-        public void Changes_size_when_new_length_is_smaller()
+    [TestFixture]
+    public class SharedMemoryStreamLengthChangingTests
+    {
+        SharedMemoryStream _stream;
+
+        [SetUp]
+        public void Setup()
         {
-            using(var stream = SharedMemoryStream.Create("stream1"))
-            {
-                stream.Write(new byte[1000], 0, 1000);
-                Assert.That(stream.Length, Is.EqualTo(1000));
+            _stream = SharedMemoryStream.Create("stream3");
 
-                stream.SetLength(700);
-                Assert.That(stream.Length, Is.EqualTo(700));
-
-                var smaller = new byte[700];
-                stream.Read(smaller, 0, 700);
-                Assert.That(smaller.Length, Is.EqualTo(700));
-            }
+            _stream.Write(new byte[1000], 0, 1000);
+            Assert.That(_stream.Length, Is.EqualTo(1000));
         }
 
-        [Test()]
-        public void Changes_size_when_new_length_is_larger()
+        [TearDown]
+        public void Teardown() => _stream.Dispose();
+
+        [TestCase(700)]
+        [TestCase(1200)]
+        public void Changes_size_when_new_length_is_smaller_and_larger(int newLength)
         {
-            using(var stream = SharedMemoryStream.Create("stream1"))
-            {
-                stream.Write(new byte[1000], 0, 1000);
-                Assert.That(stream.Length, Is.EqualTo(1000));
+            _stream.SetLength(newLength);
+            Assert.That(_stream.Length, Is.EqualTo(newLength));
 
-                stream.SetLength(1200);
-                Assert.That(stream.Length, Is.EqualTo(1200));
-
-                var smaller = new byte[1200];
-                stream.Read(smaller, 0, 1200);
-                Assert.That(smaller.Length, Is.EqualTo(1200));
-            }
+            var smaller = new byte[newLength];
+            _stream.Read(smaller, 0, newLength);
+            Assert.That(smaller.Length, Is.EqualTo(newLength));
         }
+    }
+
+    [TestFixture]
+    public class SharedMemorySettingTests
+    {
+        SharedMemoryStream _stream;
+
+        [SetUp]
+        public void Setup() => _stream = SharedMemoryStream.Create("stream3");
+
+        [TearDown]
+        public void Teardown() => _stream.Dispose();
+
+        [Test]
+        public void Should_set_position_and_length()
+        {
+            Assert.AreEqual(0, _stream.Position);
+            Assert.AreEqual(0, _stream.Length);
+        }
+
+        [Test]
+        public void Should_only_support_read_and_write()
+        {
+            Assert.IsTrue(_stream.CanRead);
+            Assert.IsFalse(_stream.CanSeek);
+            Assert.IsTrue(_stream.CanWrite);
+        }
+
+        [Test]
+        public void Show_throw_when_seek_called() => Assert.Throws<InvalidOperationException>(() => _stream.Seek(0, 0));
     }
 }
