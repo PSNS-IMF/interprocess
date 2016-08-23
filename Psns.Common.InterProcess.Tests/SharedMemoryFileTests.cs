@@ -74,5 +74,14 @@ namespace Psns.Common.InterProcess.Tests
                 Assert.AreEqual(new byte[] { 3, 4, 5 }, buffer.Skip(7));
             }
         }
+
+        [Test]
+        public void Returns_correct_file_size()
+        {
+            using(var file = SharedMemoryFile.CreateOrOpen("fileSize", 0XEE6B2800))
+            {
+                Assert.AreEqual(0XEE6B2800, file.Size);
+            }
+        }
     }
 }

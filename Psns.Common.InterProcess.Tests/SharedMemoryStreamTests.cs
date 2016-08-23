@@ -3,6 +3,7 @@ using System;
 using System.Threading.Tasks;
 using System.Runtime.Serialization.Formatters.Binary;
 using LanguageExt;
+using static LanguageExt.List;
 using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess.Tests
@@ -35,7 +36,7 @@ namespace Psns.Common.InterProcess.Tests
             Assert.That(map(_received, r => string.Format("", r.Name, string.Join("", r.Ids))),
                 Is.EqualTo(map(_toSend, d => string.Format("", d.Name, string.Join("", d.Ids)))));
 
-            _streams.Iter(s => 
+            iter(_streams, s => 
             { 
                 Assert.AreEqual(251, s.Length);
                 Assert.AreEqual(251, s.Position);
@@ -79,36 +80,128 @@ namespace Psns.Common.InterProcess.Tests
 
             Task.WaitAll(task);
         }
+
+        [Test]
+        public void Returns_two_datas_when_reserialized()
+        {
+            var stream = MakeStream("stream3", false);
+            _formatter.Serialize(stream, new TestData { Name = "extra" });
+
+            _received = (TestData)_formatter.Deserialize(stream);
+            var extra = (TestData)_formatter.Deserialize(stream);
+
+            Assert.AreEqual("extra", extra.Name);
+            
+            var bytesRead = stream.Read(new byte[1], 0, 1);
+            Assert.AreEqual(0, bytesRead);
+
+            Assert.AreEqual(468, stream.Length);
+            Assert.AreEqual(468, stream.Position);
+        }
     }
 
     [TestFixture]
     public class SharedMemoryStreamLengthChangingTests
     {
-        SharedMemoryStream _stream;
+        [TestCase(700)]
+        [TestCase(1200)]
+        public void Changes_size_when_new_length_is_smaller_and_larger(int length)
+        {
+            var stream = SharedMemoryStream.Create(length.ToString());
+
+            stream.Write(new byte[1000], 0, 1000);
+            stream.Flush();
+            Assert.That(stream.Length, Is.EqualTo(1000));
+
+            stream.SetLength(length);
+            Assert.That(stream.Length, Is.EqualTo(length));
+
+            var newLengthData = new byte[length];
+            stream.Read(newLengthData, 0, length);
+            Assert.That(newLengthData.Length, Is.EqualTo(length));
+
+            stream.Dispose();
+        }
+    }
+
+    [TestFixture]
+    public class SharedMemoryStreamSeekTests
+    {
+        Lst<SharedMemoryStream> _streams;
+
+        SharedMemoryStream MakeStream(Some<string> name, bool store = true)
+        {
+            var stream = SharedMemoryStream.Create(name);
+            Assert.AreEqual(0, stream.Position);
+
+            stream.Write(new byte[10], 0, 10);
+            Assert.AreEqual(10, stream.Position);
+
+            stream.Flush();
+            Assert.AreEqual(0, stream.Position);
+
+            if(store)
+                _streams = _streams.Add(stream);
+
+            return stream;
+        }
 
         [SetUp]
         public void Setup()
         {
-            _stream = SharedMemoryStream.Create("stream3");
-
-            _stream.Write(new byte[1000], 0, 1000);
-            _stream.Flush();
-            Assert.That(_stream.Length, Is.EqualTo(1000));
+            _streams = List<SharedMemoryStream>();
         }
 
         [TearDown]
-        public void Teardown() => _stream.Dispose();
+        public void TearDown() => iter(_streams, stream => stream.Dispose());
 
-        [TestCase(700)]
-        [TestCase(1200)]
-        public void Changes_size_when_new_length_is_smaller_and_larger(int newLength)
+        [Test]
+        public void Should_update_positon_from_begin()
         {
-            _stream.SetLength(newLength);
-            Assert.That(_stream.Length, Is.EqualTo(newLength));
+            var stream = MakeStream("begin");
 
-            var smaller = new byte[newLength];
-            _stream.Read(smaller, 0, newLength);
-            Assert.That(smaller.Length, Is.EqualTo(newLength));
+            stream.Seek(5, System.IO.SeekOrigin.Begin);
+
+            Assert.AreEqual(5, stream.Position);
+        }
+
+        [Test]
+        public void Should_throw_if_seeking_before_beginning()
+        {
+            var stream = MakeStream("negative");
+            
+            Assert.Throws<ArgumentException>(() => stream.Seek(-1, System.IO.SeekOrigin.Begin))
+                .Message.Equals("Can't seek before beginning of stream");
+        }
+
+        [Test]
+        public void Should_update_positon_from_current()
+        {
+            var stream = MakeStream("current");
+
+            stream.Seek(10, System.IO.SeekOrigin.Current);
+            stream.Seek(-3, System.IO.SeekOrigin.Current);
+
+            Assert.AreEqual(7, stream.Position);
+        }
+
+        [Test]
+        public void Should_update_positon_from_end()
+        {
+            var stream = MakeStream("end");
+
+            stream.Seek(-4, System.IO.SeekOrigin.End);
+
+            Assert.AreEqual(6, stream.Position);
+        }
+
+        [Test]
+        public void Should_throw_if_seeking_beyond_end()
+        {
+            var stream = MakeStream("overflow");
+            
+            Assert.Throws<ArgumentException>(() => stream.Seek(11, System.IO.SeekOrigin.Begin))
+                .Message.Equals("Can't seek beyond end of stream");
         }
     }
 
@@ -131,14 +224,11 @@ namespace Psns.Common.InterProcess.Tests
         }
 
         [Test]
-        public void Should_only_support_read_and_write()
+        public void Should_support_read_write_and_seek()
         {
             Assert.IsTrue(_stream.CanRead);
-            Assert.IsFalse(_stream.CanSeek);
+            Assert.IsTrue(_stream.CanSeek);
             Assert.IsTrue(_stream.CanWrite);
         }
-
-        [Test]
-        public void Show_throw_when_seek_called() => Assert.Throws<InvalidOperationException>(() => _stream.Seek(0, 0));
     }
 }
