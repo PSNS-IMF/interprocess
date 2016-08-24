@@ -97,20 +97,24 @@ namespace Psns.Common.InterProcess.Tests
 
             Assert.AreEqual(468, stream.Length);
             Assert.AreEqual(468, stream.Position);
+
+            stream.Dispose();
         }
     }
 
     [TestFixture]
     public class SharedMemoryStreamLengthChangingTests
-    {
-        [TestCase(700)]
-        [TestCase(1200)]
-        public void Changes_size_when_new_length_is_smaller_and_larger(int length)
+    {     
+        [TestCase(100, false)]
+        [TestCase(700, true)]
+        [TestCase(1200, false)]
+        [TestCase(2000, true)]
+        public void Changes_size_when_new_length_is_smaller_and_larger_using_backing_file(int length, bool flush)
         {
             var stream = SharedMemoryStream.Create(length.ToString());
 
             stream.Write(new byte[1000], 0, 1000);
-            stream.Flush();
+            if(flush) stream.Flush();
             Assert.That(stream.Length, Is.EqualTo(1000));
 
             stream.SetLength(length);
@@ -211,7 +215,7 @@ namespace Psns.Common.InterProcess.Tests
         SharedMemoryStream _stream;
 
         [SetUp]
-        public void Setup() => _stream = SharedMemoryStream.Create("stream3");
+        public void Setup() => _stream = SharedMemoryStream.Create("settings");
 
         [TearDown]
         public void Teardown() => _stream.Dispose();

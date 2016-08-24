@@ -12,37 +12,47 @@ namespace Psns.Common.InterProcess
     /// </summary>
     public class SharedMemoryFile : IDisposable
     {
+        #region private
+
         [StructLayout(LayoutKind.Sequential)]
         struct FileHeader
         {
             public long FileSize;
+            public long WritePosition;
         }
 
         static long _headerSize = Marshal.SizeOf(typeof(FileHeader));
 
         readonly MemoryMappedFile _file;
         readonly string _name;
+        readonly long _writePosition;
         
         static Lst<string> _namesOpen = List<string>();
-
-        /// <summary>
-        /// The size of the file in bytes
-        /// </summary>
-        public readonly long Size;
 
         SharedMemoryFile(string name, Some<MemoryMappedFile> file)
         {
             _name = name;
             _file = file;
 
-            using(var view = _file.CreateViewAccessor(0, _headerSize))
-            {
-                FileHeader header;
-                view.Read(0, out header);
+            var header = use(
+                _file.CreateViewAccessor(0, _headerSize),
+                view =>
+                {
+                    FileHeader h = new FileHeader();
+                    view.Read(0, out h);
+                    return h;
+                });
 
-                Size = header.FileSize;
-            }
+            Size = header.FileSize;
+            _writePosition = header.WritePosition;
         }
+
+        #endregion
+
+        /// <summary>
+        /// The size of the file in bytes
+        /// </summary>
+        public readonly long Size;
 
         /// <summary>
         /// Open an existing file
@@ -78,31 +88,70 @@ namespace Psns.Common.InterProcess
                 HandleInheritability.None
             );
 
-            using(var view = file.CreateViewAccessor(0, _headerSize))
-            {
-                var header = new FileHeader { FileSize = size };
-                view.Write(0, ref header);
-            }
+            use(
+                file.CreateViewAccessor(0, _headerSize),
+                view =>
+                {
+                    var header = new FileHeader { FileSize = size, WritePosition = _headerSize };
+                    view.Write(0, ref header);
+                    return unit;
+                });
 
             _namesOpen = _namesOpen.Add(name);
 
-            var buffer = new SharedMemoryFile(name, file);
-            return buffer;
+            return new SharedMemoryFile(name, file);
         }
 
         /// <summary>
         /// Write data to MemoryMappedFile
         /// </summary>
         /// <param name="data"></param>
-        public void Write(byte[] data)
+        /// <returns>A new SharedMemoryFile containing the new data</returns>
+        public SharedMemoryFile Write(byte[] data)
         {
-            using(var view = _file.CreateViewAccessor(_headerSize, data.Length))
-            {
-                view.WriteArray(0, data, 0, data.Length);
-            }
+            return Write(data, 0, data.Length);
         }
 
-        //TODO write with offset
+        /// <summary>
+        /// Writes buffer to MemoryMappedFile at the current write position
+        /// </summary>
+        /// <param name="buffer">The array containing the bytes to write.</param>
+        /// <param name="offset">The index in the buffer from which to begin copying data to the file.</param>
+        /// <param name="count">The number of bytes to copy from the buffer.</param>
+        /// <returns>A new SharedMemoryFile containing the new data</returns>
+        public SharedMemoryFile Write(byte[] buffer, int offset, int count)
+        {
+            return Write(_writePosition - _headerSize, buffer, offset, count);
+        }
+
+        /// <summary>
+        /// Writes buffer to MemoryMappedFile
+        /// </summary>
+        /// <param name="position">The position within the file to begin writing</param>
+        /// <param name="buffer">The array containing the bytes to write.</param>
+        /// <param name="offset">The index in the buffer from which to begin copying data to the file.</param>
+        /// <param name="count">The number of bytes to copy from the buffer.</param>
+        /// <returns>A new SharedMemoryFile containing the new data</returns>
+        public SharedMemoryFile Write(long position, byte[] buffer, int offset, int count)
+        {
+            use(
+                _file.CreateViewAccessor(_headerSize + position, count),
+                view => unit.tee(u => view.WriteArray(0, buffer, offset, count)));
+
+            use(
+                _file.CreateViewAccessor(0, _headerSize),
+                view => new FileHeader().tee(header =>
+                {
+                    view.Read(0, out header);
+                    header.WritePosition += count;
+                    view.Write(0, ref header);
+                }));
+
+            var updated = SharedMemoryFile.Open(_name);
+            _file.Dispose();
+
+            return updated;
+        }
 
         /// <summary>
         /// Read entire contents of MemoryMappedFile
@@ -122,16 +171,36 @@ namespace Psns.Common.InterProcess
         /// <param name="count">The number of bytes to read from file</param>
         public void Read(long position, byte[] buffer, int offset, int count)
         {
-            using(var view = _file.CreateViewAccessor(_headerSize + position, count))
-            {
-                view.ReadArray(0, buffer, offset, count);
-            }
+            use(
+                _file.CreateViewAccessor(_headerSize + position, count),
+                view => view.ReadArray(0, buffer, offset, count));
+        }
+
+        /// <summary>
+        /// Create a bigger SharedMemoryFile containing same data
+        /// </summary>
+        /// <param name="size"></param>
+        /// <returns></returns>
+        public SharedMemoryFile Resize(long size)
+        {
+            var existingData = new byte[Size];
+
+            use(_file.CreateViewStream(_headerSize, Size),
+                view => view.Read(existingData, 0, existingData.Length));
+
+            Dispose();
+
+            return SharedMemoryFile.CreateOrOpen(_name, size).Write(existingData);
         }
 
         #region IDisposable Support
 
         bool disposedValue = false;
 
+        /// <summary>
+        /// Dispose of MemoryMappedFile
+        /// </summary>
+        /// <param name="disposing"></param>
         protected virtual void Dispose(bool disposing)
         {
             if(!disposedValue)

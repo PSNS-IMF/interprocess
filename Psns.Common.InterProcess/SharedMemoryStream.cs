@@ -11,10 +11,25 @@ namespace Psns.Common.InterProcess
     /// </summary>
     public class SharedMemoryStream : Stream
     {
+        #region private initialization
+
         readonly string _name;
         long _length;
         Option<Lst<byte>> _buffer;
         Option<SharedMemoryFile> _file;
+
+        SharedMemoryStream(Some<string> name, Option<SharedMemoryFile> file)
+        {
+            _name = name;
+            _buffer = List<byte>();
+            _file = file;
+
+            _length = match(_file,
+                Some: f => f.Size,
+                None: () => 0);
+        }
+
+        #endregion
 
         /// <summary>
         /// Create a new stream
@@ -27,29 +42,32 @@ namespace Psns.Common.InterProcess
         /// Open an existing stream
         /// </summary>
         /// <param name="name">Name of the existing stream</param>
-        /// <param name="length">The size of the existing stream</param>
         /// <returns></returns>
         public static SharedMemoryStream Open(Some<string> name) => new SharedMemoryStream(name, SharedMemoryFile.Open(name));
 
-        SharedMemoryStream(Some<string> name, Option<SharedMemoryFile> file)
-        {
-            _name = name;
-            _buffer = List<byte>();
-            _file = file;
-            
-            _length = match(_file,
-                Some: f => f.Size,
-                None: () => 0);
-        }
-
+        /// <summary>
+        /// This stream supports reading.
+        /// </summary>
         public override bool CanRead { get; } = true;
 
+        /// <summary>
+        /// This stream supports seeking.
+        /// </summary>
         public override bool CanSeek { get; } = true;
 
+        /// <summary>
+        /// This stream supports writing.
+        /// </summary>
         public override bool CanWrite { get; } = true;
 
+        /// <summary>
+        /// Stream length in bytes.
+        /// </summary>
         public override long Length => _length;
 
+        /// <summary>
+        /// Gets or sets the position within the stream.
+        /// </summary>
         public override long Position { set; get; } = 0;
 
         /// <summary>
@@ -57,33 +75,22 @@ namespace Psns.Common.InterProcess
         /// </summary>
         public override void Flush()
         {
-            ifSome(_buffer,
-                b =>
+            _buffer = _buffer.Match(
+                Some: list =>
                 {
-                    if(b != Lst<byte>.Empty)
-                    {
-                        var data = toArray(b);
+                    var data = toArray(list);
 
-                        var file = match(
-                            _file, 
-                            Some: f => 
-                                {
-                                    if(f.Size < _length)
-                                        f.Dispose();
+                    var file = match(
+                        _file,
+                        Some: f => f.Size < _length ? f.Resize(_length) : f,
+                        None: () => SharedMemoryFile.CreateOrOpen(_name, data.Length));
 
-                                    return SharedMemoryFile.CreateOrOpen(_name, _length);
-                                }, 
-                            None: () => SharedMemoryFile.CreateOrOpen(_name, data.Length));
-
-                        file.Write(data);
-
-                        _file = file;
-
-                        _buffer = empty<byte>();
-                    }
-
+                    _file = file.Write(data, 0, data.Length);
                     Position = 0;
-                });
+
+                    return Lst<byte>.Empty;
+                },
+                None: () => _buffer);
         }
 
         /// <summary>
@@ -105,26 +112,34 @@ namespace Psns.Common.InterProcess
                 Some: b => b,
                 None: () => List<byte>());
 
-            var someFile = match(_file, f => f, () => SharedMemoryFile.Open(_name));
+            var sizeToReadFunc = match(
+                match(_file,
+                    Some: f => Right<Lst<byte>, SharedMemoryFile>(f),
+                    None: () => Left<Lst<byte>, SharedMemoryFile>(someBuffer)),
 
-            if(Position >= someFile.Size) return 0;
+                Right: r => Tuple<long, ReadFunc>(r.Size, FileRead),
+                Left: l => Tuple<long, ReadFunc>(l.Count, StreamRead));
 
-            var proposedPosition = Position + count;
-            var actualCount = count;
+            return Position >= sizeToReadFunc.Item1
+                ? 0
+                : fun(() =>
+                {
+                    var proposedPosition = Position + count;
 
-            if(proposedPosition > someFile.Size)
-                actualCount = (int)(someFile.Size - Position);
+                    var actualCount = proposedPosition > sizeToReadFunc.Item1
+                        ?(int)(sizeToReadFunc.Item1 - Position)
+                        : count;
 
-            someFile.Read(Position, buffer, offset, actualCount);
-            someBuffer = someBuffer.AddRange(buffer.Skip(offset).Take(actualCount));
-            _buffer = someBuffer;
-            _file = someFile;
+                    sizeToReadFunc.Item2(buffer, offset, actualCount, someBuffer);
 
-            Position += actualCount;
+                    Position += actualCount;
 
-            if(_length < Position) _length = _length + actualCount;
+                    _length = _length < Position
+                        ? _length + actualCount
+                        : _length;
 
-            return actualCount;
+                    return actualCount;
+                })();
         }
 
         /// <summary>
@@ -160,21 +175,20 @@ namespace Psns.Common.InterProcess
         }
 
         /// <summary>
-        /// If current length < value, stream is truncated to value; else, stream is expanded to value
+        /// If current length greater than value, stream is truncated to value; else, stream is expanded to value with undefined data
         /// </summary>
         /// <param name="value">New stream size</param>
         public override void SetLength(long value)
         {
-            var bufferList = match(_buffer, b => b, () => List<byte>());
-            var currentBuffer = toArray(bufferList);
-            var newBuffer = new byte[value];
+            var bufferList = match(
+                _buffer, 
+                Some: b => b, 
+                None: () => List<byte>());
 
-            if(currentBuffer.Length > value)
-                toArray(currentBuffer.Take((int)value)).CopyTo(newBuffer, 0);
-            else
-                currentBuffer.CopyTo(newBuffer, 0);
+            bufferList = bufferList.Count > value
+                ? List<byte>().AddRange(bufferList.Take((int)value))
+                : bufferList.AddRange(new byte[value - bufferList.Count]);
 
-            bufferList = List<byte>().AddRange(newBuffer);
             _buffer = bufferList;
             _length = bufferList.Count;
         }
@@ -197,10 +211,49 @@ namespace Psns.Common.InterProcess
             _buffer = someBuffer;
         }
 
+        #region private helpers
+
+        delegate void ReadFunc(byte[] buffer, int offset, int count, Some<Lst<byte>> streamBuffer);
+
+        /// <summary>
+        /// Read from backing file
+        /// </summary>
+        /// <param name="buffer"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        /// <param name="streamBuffer"></param>
+        void FileRead(byte[] buffer, int offset, int count, Some<Lst<byte>> streamBuffer) 
+        {
+            var file = match(_file, f => f, () => SharedMemoryFile.Open(_name));
+
+            file.Read(Position, buffer, offset, count);
+            streamBuffer = streamBuffer.Value.AddRange(buffer.Skip(offset).Take(count));
+            _buffer = streamBuffer;
+            _file = file;
+        }
+
+        /// <summary>
+        /// Read from buffer
+        /// </summary>
+        /// <param name="buffer"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        /// <param name="streamBuffer"></param>
+        void StreamRead(byte[] buffer, int offset, int count, Some<Lst<byte>> streamBuffer) 
+        {
+            toArray(streamBuffer.Value.Skip((int)Position).Take(count)).CopyTo(buffer, offset);
+        }
+
+        #endregion
+
         #region IDisposable
 
         bool disposedValue = false;
 
+        /// <summary>
+        /// Dispose SharedMemoryFile
+        /// </summary>
+        /// <param name="disposing"></param>
         protected override void Dispose(bool disposing)
         {
             if(!disposedValue)

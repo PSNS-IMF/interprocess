@@ -10,6 +10,11 @@
     <projectUrl>https://github.com/PSNS-IMF/interprocess</projectUrl>
     <licenseUrl>https://github.com/PSNS-IMF/interprocess/blob/master/LICENSE.md</licenseUrl>
     <releaseNotes>
+      ## 1.0.0.3
+      ### Features
+      * Corrected implementations of Stream base class methods in SHaredMemoryStream
+      * Added resize capabililty and partial file writing to SharedMemoryFile
+      
       ## 1.0.0.2
       ### Features
       * Added better handling for opening new or existing ShareMemoryFiles
