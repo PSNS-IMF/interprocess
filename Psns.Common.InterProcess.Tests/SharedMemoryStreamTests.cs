@@ -1,9 +1,7 @@
 ﻿using NUnit.Framework;
 using System;
+using System.IO;
 using System.Threading.Tasks;
-
-using Newtonsoft.Json;
-using Newtonsoft.Json.Bson;
 
 using LanguageExt;
 using static LanguageExt.List;
@@ -14,46 +12,30 @@ namespace Psns.Common.InterProcess.Tests
     [TestFixture]
     public class SharedMemorySerializationTests
     {
-        struct TestData
-        {
-            public string Name;
-            public int[] Ids;
-        }
-
-        TestData _toSend, _received;
+        byte[] _toSend, _received;
         Lst<SharedMemoryStream> _streams;
-        BsonWriter _writer;
-        BsonReader _reader;
-        JsonSerializer _serializer;
 
         [SetUp]
         public void Setup()
         {
             _streams = List<SharedMemoryStream>();
-            _toSend = new TestData { Ids = new[] { 1, 2, 3, 4 }, Name = "test data" };
-            _serializer = new JsonSerializer();
+            _toSend = new byte[] { 1, 2, 3, 4, 5 };
+            _received = new byte[5];
         }
 
         [TearDown]
         public void Teardown()
         {
-            Assert.That(map(_received, r => string.Format("", r.Name, string.Join("", r.Ids))),
-                Is.EqualTo(map(_toSend, d => string.Format("", d.Name, string.Join("", d.Ids)))));
+            Assert.AreEqual(map(_toSend, b => string.Join("", b)), 
+                map(_received, b => string.Join("", b)));
 
             iter(_streams, s => s.Dispose());
-
-            _writer.Close();
-            _reader.Close();
         }
 
-        SharedMemoryStream MakeStream(Some<string> name, bool store = true, bool flush = true)
+        SharedMemoryStream MakeStream(Some<string> name, bool store = true)
         {
             var stream = SharedMemoryStream.Create(name);
-            _writer = new BsonWriter(stream);
-            _serializer.Serialize(_writer, _toSend);
-
-            if(flush)
-                _writer.Flush();
+            stream.Write(_toSend, 0, _toSend.Length);
 
             if(store)
                 _streams = _streams.Add(stream);
@@ -65,21 +47,21 @@ namespace Psns.Common.InterProcess.Tests
         public void Returns_data_sent_intraprocess()
         {
             var stream = MakeStream("stream1");
-            _reader = new BsonReader(stream);
-            _received = _serializer.Deserialize<TestData>(_reader);
+            stream.Seek(0, SeekOrigin.Begin);
+            stream.Read(_received, 0, _received.Length);
         }
 
         [Test]
         public void Returns_data_sent_interprocess_when_file_isopen()
         {
             var stream = MakeStream("stream2", false);
+            stream.Flush();
 
             var task = Task.Factory.StartNew(() =>
             {
                 var pickupStream = SharedMemoryStream.Open("stream2");
                 _streams = _streams.Add(pickupStream);
-                _reader = new BsonReader(pickupStream);
-                _received = _serializer.Deserialize<TestData>(_reader);
+                pickupStream.Read(_received, 0, _received.Length);
             });
 
             Task.WaitAll(task);
@@ -88,25 +70,22 @@ namespace Psns.Common.InterProcess.Tests
         [Test]
         public void Returns_two_datas_when_reserialized()
         {
-            var stream = MakeStream("stream3", false, false);
+            var stream = MakeStream("stream3", false);
 
-            var writer = new BsonWriter(stream);
-            var serializer = new JsonSerializer();
+            var extra = new byte[] { 6, 7, 8 };
+            stream.Write(extra, 0, extra.Length);
+            stream.Seek(0, SeekOrigin.Begin);
 
-            serializer.Serialize(writer, new TestData { Name = "extra" });
-            stream.Seek(0, System.IO.SeekOrigin.Begin);
+            stream.Read(_received, 0, _received.Length);
+            stream.Read(extra, 0, extra.Length);
 
-            _reader = new BsonReader(stream);
-            _received = _serializer.Deserialize<TestData>(_reader);
-            var extra = _serializer.Deserialize<TestData>(_reader);
-
-            Assert.AreEqual("extra", extra.Name);
+            Assert.AreEqual(new byte[] { 6, 7, 8 }, extra);
             
             var bytesRead = stream.Read(new byte[1], 0, 1);
             Assert.AreEqual(0, bytesRead);
 
-            Assert.AreEqual(468, stream.Length);
-            Assert.AreEqual(468, stream.Position);
+            Assert.AreEqual(8, stream.Length);
+            Assert.AreEqual(8, stream.Position);
 
             stream.Dispose();
         }
