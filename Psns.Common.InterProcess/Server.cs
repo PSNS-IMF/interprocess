@@ -1,40 +1,40 @@
 ﻿using System;
-using System.IO;
 using System.IO.Pipes;
-using System.Linq;
 
 using LanguageExt;
-using static LanguageExt.Map;
 using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess
 {
-    public class Server : IDisposable
+    public static class Server
     {
-        public static Server Create(Some<string> name)
+        /// <summary>
+        /// Server creation function
+        /// </summary>
+        /// <param name="name">A name that calling clients should know.</param>
+        /// <param name="messageHandler">An function to call when a message is received.</param>
+        /// <returns>A new Server</returns>
+        public static Server<T> Create<T>(Some<string> name, Action<T> messageHandler)
         {
-            return new Server(name);
+            return new Server<T>(name, messageHandler);
         }
+    }
 
-        public int ThreadsRunning => 0;
-
+    public class Server<T>
+    {
         readonly string _name;
-        Option<Map<int, NamedPipeServerStream>> _pipes;
+        readonly Action<T> _messageHandler;
 
-        Server(Some<string> name)
+        internal Server(Some<string> name, Some<Action<T>> messageHandler)
         {
             _name = name;
+            _messageHandler = messageHandler;
 
             BeginListening();
         }
 
         Unit BeginListening()
         {
-            var pipes = match(
-                _pipes, 
-                Some: p => p, 
-                None: () => Map<int, NamedPipeServerStream>());
-
             // throws
             var pipe = new NamedPipeServerStream(_name,
                 PipeDirection.InOut,
@@ -55,47 +55,14 @@ namespace Psns.Common.InterProcess
                     // do work with client's security token
                     pipeState.RunAsClient(() =>
                         {
-
+                            //_messageHandler(message)
                         });
 
                     pipeState.WaitForPipeDrain(); // wait for client to receive all sent bytes
-
-                    pipes = remove(pipes, pipeState.GetHashCode());
-                    _pipes = pipes;
                 }
             }, pipe);
 
-            pipes = add(pipes, pipe.GetHashCode(), pipe);
-            _pipes = pipes;
-
             return unit;
         }
-
-        #region IDisposable Support
-
-        bool disposedValue = false;
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if(!disposedValue)
-            {
-                if(disposing)
-                {
-                    match(_pipes,
-                        Some: p => 
-                            {
-                                iter(p, (k, v) => v.Dispose());
-                                return unit;
-                            },
-                        None: () => unit);
-                }
-
-                disposedValue = true;
-            }
-        }
-
-        public void Dispose() { Dispose(true); }
-
-        #endregion
     }
 }
