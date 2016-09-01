@@ -1,14 +1,10 @@
 ﻿using System;
 using System.IO;
 using System.IO.Pipes;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 using LanguageExt;
-using static LanguageExt.List;
+using static LanguageExt.Map;
 using static LanguageExt.Prelude;
 
 namespace Psns.Common.InterProcess
@@ -20,10 +16,10 @@ namespace Psns.Common.InterProcess
             return new Server(name);
         }
 
-        public int ThreadsRunning => _serverCount;
+        public int ThreadsRunning => 0;
 
         readonly string _name;
-        Option<Lst<NamedPipeServerStream>> _pipes;
+        Option<Map<int, NamedPipeServerStream>> _pipes;
 
         Server(Some<string> name)
         {
@@ -34,6 +30,11 @@ namespace Psns.Common.InterProcess
 
         Unit BeginListening()
         {
+            var pipes = match(
+                _pipes, 
+                Some: p => p, 
+                None: () => Map<int, NamedPipeServerStream>());
+
             // throws
             var pipe = new NamedPipeServerStream(_name,
                 PipeDirection.InOut,
@@ -59,11 +60,13 @@ namespace Psns.Common.InterProcess
 
                     pipeState.WaitForPipeDrain(); // wait for client to receive all sent bytes
 
-                    _serverCount--;
+                    pipes = remove(pipes, pipeState.GetHashCode());
+                    _pipes = pipes;
                 }
             }, pipe);
 
-            _serverCount++;
+            pipes = add(pipes, pipe.GetHashCode(), pipe);
+            _pipes = pipes;
 
             return unit;
         }
@@ -78,14 +81,20 @@ namespace Psns.Common.InterProcess
             {
                 if(disposing)
                 {
-
+                    match(_pipes,
+                        Some: p => 
+                            {
+                                iter(p, (k, v) => v.Dispose());
+                                return unit;
+                            },
+                        None: () => unit);
                 }
 
                 disposedValue = true;
             }
         }
 
-        public void Dispose() => Dispose(true);
+        public void Dispose() { Dispose(true); }
 
         #endregion
     }
